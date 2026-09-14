@@ -5,6 +5,7 @@
     :loading="loading"
     :search-input.sync="query"
     prepend-icon="search"
+    label="Browse Plex"
     no-filter
     clearable
     hide-details
