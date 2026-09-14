@@ -11,7 +11,7 @@
     hide-details
     hide-no-data
     solo
-    label="Search Plex titles"
+    :label="searchLabel"
     :menu-props="{ maxHeight: '60vh', maxWidth: '500px' }"
   >
     <template #item="{ item, on, attrs }">
@@ -67,10 +67,44 @@
             </v-list-item-subtitle>
           </v-list-item-content>
 
-          <v-list-item-action v-if="isNominated(item)">
-            <v-icon color="primary">
+          <v-list-item-action
+            v-if="isNominated(item) || canAddToPlaylist(item)"
+            class="flex-row align-center"
+          >
+            <v-icon
+              v-if="isNominated(item)"
+              color="primary"
+              class="mr-1"
+            >
               check
             </v-icon>
+
+            <span
+              v-if="canAddToPlaylist(item) && isInPlaylist(item)"
+              class="text-caption text--secondary d-flex align-center"
+              @click.stop
+            >
+              <v-icon
+                small
+                class="mr-1"
+              >
+                playlist_add_check
+              </v-icon>
+              Already in playlist
+            </span>
+
+            <v-btn
+              v-else-if="canAddToPlaylist(item)"
+              icon
+              small
+              title="Add to playlist"
+              aria-label="Add to playlist"
+              @click.stop="addToPlaylist(item)"
+            >
+              <v-icon small>
+                playlist_add
+              </v-icon>
+            </v-btn>
           </v-list-item-action>
         </v-list-item>
       </template>
@@ -108,8 +142,14 @@ export default {
       'GET_PLEX_SERVER',
     ]),
 
+    ...mapGetters('synclounge', [
+      'AM_I_HOST',
+      'IS_IN_ROOM',
+    ]),
+
     ...mapGetters('movienight', [
       'IS_CONTROLLER_ACTIVE',
+      'IS_IN_PLAYLIST',
       'IS_NOMINATED',
     ]),
 
@@ -119,6 +159,17 @@ export default {
 
     canSendNomination() {
       return !this.isControllerWindow || this.IS_CONTROLLER_ACTIVE;
+    },
+
+    canManagePlaylist() {
+      return (this.IS_IN_ROOM && this.AM_I_HOST)
+        || (this.isControllerWindow && this.IS_CONTROLLER_ACTIVE);
+    },
+
+    searchLabel() {
+      return this.canManagePlaylist
+        ? 'Nominate or add to playlist'
+        : 'Nominate a Plex title';
     },
   },
 
@@ -139,6 +190,7 @@ export default {
 
     ...mapActions('movienight', [
       'ADD_PLEX_NOMINATION',
+      'ADD_PLEX_PLAYLIST_ITEM',
     ]),
 
     nominationKey(item) {
@@ -152,6 +204,29 @@ export default {
       return key
         ? this.IS_NOMINATED(key)
         : false;
+    },
+
+    playlistKey(item) {
+      return item.machineIdentifier && item.ratingKey
+        ? `plex:${item.machineIdentifier}:${item.ratingKey}`
+        : null;
+    },
+
+    isInPlaylist(item) {
+      const key = this.playlistKey(item);
+      return key
+        ? this.IS_IN_PLAYLIST(key)
+        : false;
+    },
+
+    isPlaylistableItem(item) {
+      return item.type === 'movie' || item.type === 'episode';
+    },
+
+    canAddToPlaylist(item) {
+      return this.canManagePlaylist
+        && this.isPlaylistableItem(item)
+        && Boolean(this.playlistKey(item));
     },
 
     isNominatable(item) {
@@ -172,6 +247,25 @@ export default {
         });
       } else {
         this.ADD_PLEX_NOMINATION(item);
+      }
+
+      this.clear();
+    },
+
+    addToPlaylist(item) {
+      if (this.isInPlaylist(item) || !this.canAddToPlaylist(item)) {
+        return;
+      }
+
+      if (this.isControllerWindow) {
+        postMovieNightControllerMessage({
+          room: this.$route.params.room,
+          type: 'command',
+          command: 'addPlexPlaylistItem',
+          payload: item,
+        });
+      } else {
+        this.ADD_PLEX_PLAYLIST_ITEM(item);
       }
 
       this.clear();
