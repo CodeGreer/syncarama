@@ -24,6 +24,22 @@ const MOVIENIGHT_RATE_LIMIT_MAX_ACTIONS = 60;
 const MAX_CHAT_MESSAGE_LENGTH = 1000;
 const movieNightActionBuckets = new Map();
 
+const isObjectPayload = (data) => data !== null && typeof data === 'object'
+  && !Array.isArray(data);
+
+const isPlayerStatePayload = (data) => isObjectPayload(data)
+  && typeof data.state === 'string'
+  && Number.isFinite(data.time)
+  && Number.isFinite(data.duration)
+  && Number.isFinite(data.playbackRate);
+
+const rejectMalformedPayload = ({ socket, eventName, disconnectSocket = false }) => {
+  logSocket({ socketId: socket.id, message: `Rejected malformed ${eventName} payload` });
+  if (disconnectSocket) {
+    socket.disconnect(true);
+  }
+};
+
 const canManageRoomSetting = ({ socket, trustedMode }) => (
   isUserInARoom(socket.id) && (isUserHost(socket.id) || trustedMode)
 );
@@ -56,7 +72,9 @@ const clearMovieNightRateLimit = (socketId) => {
     .forEach((key) => movieNightActionBuckets.delete(key));
 };
 
-const emitMovieNightStateIfChanged = ({ server, socket, actionName, change }) => {
+const emitMovieNightStateIfChanged = ({
+  server, socket, actionName, change,
+}) => {
   if (!allowMovieNightAction(socket, actionName)) {
     return;
   }
@@ -66,12 +84,16 @@ const emitMovieNightStateIfChanged = ({ server, socket, actionName, change }) =>
   }
 };
 
-const join = ({
-  server, socket, data: {
+const join = ({ server, socket, data }) => {
+  if (!isPlayerStatePayload(data) || typeof data.roomId !== 'string' || !data.roomId) {
+    rejectMalformedPayload({ socket, eventName: 'join', disconnectSocket: true });
+    return;
+  }
+
+  const {
     roomId, desiredUsername, desiredPartyPausingEnabled, desiredAutoHostEnabled, thumb,
     playerProduct, state, time, duration, playbackRate, media, syncFlexibility,
-  },
-}) => {
+  } = data;
   if (!doesSocketHaveRtt(socket.id)) {
     // Ignore join if we don't have rtt yet.
     // Client should never do this so this just exists for bad actors
@@ -184,7 +206,6 @@ const transferHost = ({ server, socket, data: desiredHostId }) => {
   });
 };
 
-
 const autoHostIntent = ({ server, socket }) => {
   if (!isUserInARoom(socket.id)) {
     return;
@@ -213,15 +234,20 @@ const autoHostIntent = ({ server, socket }) => {
   });
 };
 
-const playerStateUpdate = ({
-  server, socket, data: {
-    state, time, duration, playbackRate,
-  },
-}) => {
+const playerStateUpdate = ({ server, socket, data }) => {
   if (!isUserInARoom(socket.id)) {
     socket.disconnect(true);
     return;
   }
+
+  if (!isPlayerStatePayload(data)) {
+    rejectMalformedPayload({ socket, eventName: 'playerStateUpdate' });
+    return;
+  }
+
+  const {
+    state, time, duration, playbackRate,
+  } = data;
 
   updateUserPlayerState({
     socketId: socket.id, state, time, duration, playbackRate,
@@ -230,15 +256,24 @@ const playerStateUpdate = ({
   emitPlayerStateUpdateToRoom({ server, socketId: socket.id });
 };
 
-const mediaUpdate = ({
-  server, socket, data: {
-    state, time, duration, playbackRate, media, userInitiated,
-  },
-}) => {
+const mediaUpdate = ({ server, socket, data }) => {
   if (!isUserInARoom(socket.id)) {
     socket.disconnect(true);
     return;
   }
+
+  const hasValidMedia = isObjectPayload(data)
+    && (data.media === null || isObjectPayload(data.media));
+  const hasValidUserInitiated = isObjectPayload(data)
+    && (data.userInitiated === undefined || typeof data.userInitiated === 'boolean');
+  if (!isPlayerStatePayload(data) || !hasValidMedia || !hasValidUserInitiated) {
+    rejectMalformedPayload({ socket, eventName: 'mediaUpdate' });
+    return;
+  }
+
+  const {
+    state, time, duration, playbackRate, media, userInitiated,
+  } = data;
 
   updateUserPlayerState({
     socketId: socket.id, state, time, duration, playbackRate,
@@ -329,7 +364,9 @@ const sendMessage = ({ server, socket, data: text }) => {
   });
 };
 
-const setPartyPausingEnabled = ({ server, socket, data: isPartyPausingEnabled, trustedMode }) => {
+const setPartyPausingEnabled = ({
+  server, socket, data: isPartyPausingEnabled, trustedMode,
+}) => {
   if (!canManageRoomSetting({ socket, trustedMode })) {
     socket.disconnect(true);
     return;
@@ -351,7 +388,9 @@ const setPartyPausingEnabled = ({ server, socket, data: isPartyPausingEnabled, t
   });
 };
 
-const setAutoHostEnabled = ({ server, socket, data: isAutoHostEnabled, trustedMode }) => {
+const setAutoHostEnabled = ({
+  server, socket, data: isAutoHostEnabled, trustedMode,
+}) => {
   if (!canManageRoomSetting({ socket, trustedMode })) {
     socket.disconnect(true);
     return;
