@@ -15,6 +15,21 @@ const MOVIENIGHT_RATE_LIMIT_WINDOW_MS = 10000;
 const MOVIENIGHT_RATE_LIMIT_MAX_ACTIONS = 60;
 const MAX_CHAT_MESSAGE_LENGTH = 1000;
 const movieNightActionBuckets = new Map();
+const isObjectPayload = data => data !== null && typeof data === 'object' && !Array.isArray(data);
+const isPlayerStatePayload = data => isObjectPayload(data) && typeof data.state === 'string' && Number.isFinite(data.time) && Number.isFinite(data.duration) && Number.isFinite(data.playbackRate);
+const rejectMalformedPayload = ({
+  socket,
+  eventName,
+  disconnectSocket = false
+}) => {
+  (0, _actions.logSocket)({
+    socketId: socket.id,
+    message: "Rejected malformed ".concat(eventName, " payload")
+  });
+  if (disconnectSocket) {
+    socket.disconnect(true);
+  }
+};
 const canManageRoomSetting = ({
   socket,
   trustedMode
@@ -62,7 +77,17 @@ const emitMovieNightStateIfChanged = ({
 const join = ({
   server,
   socket,
-  data: {
+  data
+}) => {
+  if (!isPlayerStatePayload(data) || typeof data.roomId !== 'string' || !data.roomId) {
+    rejectMalformedPayload({
+      socket,
+      eventName: 'join',
+      disconnectSocket: true
+    });
+    return;
+  }
+  const {
     roomId,
     desiredUsername,
     desiredPartyPausingEnabled,
@@ -75,8 +100,7 @@ const join = ({
     playbackRate,
     media,
     syncFlexibility
-  }
-}) => {
+  } = data;
   if (!(0, _state.doesSocketHaveRtt)(socket.id)) {
     // Ignore join if we don't have rtt yet.
     // Client should never do this so this just exists for bad actors
@@ -229,17 +253,25 @@ const autoHostIntent = ({
 const playerStateUpdate = ({
   server,
   socket,
-  data: {
-    state,
-    time,
-    duration,
-    playbackRate
-  }
+  data
 }) => {
   if (!(0, _state.isUserInARoom)(socket.id)) {
     socket.disconnect(true);
     return;
   }
+  if (!isPlayerStatePayload(data)) {
+    rejectMalformedPayload({
+      socket,
+      eventName: 'playerStateUpdate'
+    });
+    return;
+  }
+  const {
+    state,
+    time,
+    duration,
+    playbackRate
+  } = data;
   (0, _state.updateUserPlayerState)({
     socketId: socket.id,
     state,
@@ -255,19 +287,29 @@ const playerStateUpdate = ({
 const mediaUpdate = ({
   server,
   socket,
-  data: {
+  data
+}) => {
+  if (!(0, _state.isUserInARoom)(socket.id)) {
+    socket.disconnect(true);
+    return;
+  }
+  const hasValidMedia = isObjectPayload(data) && (data.media === null || isObjectPayload(data.media));
+  const hasValidUserInitiated = isObjectPayload(data) && (data.userInitiated === undefined || typeof data.userInitiated === 'boolean');
+  if (!isPlayerStatePayload(data) || !hasValidMedia || !hasValidUserInitiated) {
+    rejectMalformedPayload({
+      socket,
+      eventName: 'mediaUpdate'
+    });
+    return;
+  }
+  const {
     state,
     time,
     duration,
     playbackRate,
     media,
     userInitiated
-  }
-}) => {
-  if (!(0, _state.isUserInARoom)(socket.id)) {
-    socket.disconnect(true);
-    return;
-  }
+  } = data;
   (0, _state.updateUserPlayerState)({
     socketId: socket.id,
     state,
