@@ -7,7 +7,7 @@
   "scripts": {
     "build": "babel src --out-dir dist",
     "start": "node dist/index.js",
-    "test": "node --test test/*.test.js",
+    "test": "npm run build && node --test test/*.test.js",
     "lint": "eslint .",
     "dev": "nodemon --exec babel-node src",
     "prepare": "if-env SKIP_BUILD=true && echo 'Skipping build' || npm run build"
